@@ -1,0 +1,103 @@
+CREATE EXTERNAL TABLE postgres.public.nebogin_iptv (
+mrf_id int,
+location_name varchar(32),
+san varchar(32),
+mac varchar(32),
+content_id int,
+content_name varchar(100),
+session_content_time_start timestamp,
+session_content_time_end timestamp,
+session_content_on_period int,
+channel_name varchar(100),
+channel_number int,
+is_favourite_channel varchar(8) ,
+favourite_channel_date timestamp,
+content_type varchar(32),
+watching_type varchar(22),
+period timestamp,
+accn_id varchar(22),
+load_dttm timestamp,
+src_id int,
+eff_dttm timestamp,
+exp_dttm timestamp)
+LOCATION (
+	'pxf://nebogin.iptv_tv?PROFILE=hive&server=hadoop'
+) ON ALL
+FORMAT 'CUSTOM' ( FORMATTER='pxfwritable_import' )
+ENCODING 'UTF8';
+
+--DROP MATERIALIZED VIEW public.mv_nebogin_iptv;
+
+CREATE MATERIALIZED VIEW public.mv_nebogin_iptv
+TABLESPACE pg_default
+AS SELECT
+location_name,
+san,
+session_content_time_start,
+session_content_time_end,
+session_content_on_period,
+channel_name,
+channel_number,
+period
+   FROM nebogin_iptv
+  WHERE channel_number notnull
+WITH DATA
+DISTRIBUTED RANDOMLY;
+
+refresh MATERIALIZED VIEW public.mv_nebogin_iptv;
+
+
+CREATE MATERIALIZED VIEW public.mv_nebogin_loc_rate
+TABLESPACE pg_default
+AS SELECT
+period,
+location_name,
+sum(session_content_on_period)/60/60 as hours,
+count(*) as count
+
+   FROM mv_nebogin_iptv
+   group by 1,2
+   order by 4
+  WITH DATA
+DISTRIBUTED RANDOMLY;
+
+--DROP MATERIALIZED VIEW public.mv_nebogin_channel_rate;
+
+CREATE MATERIALIZED VIEW public.mv_nebogin_channel_rate
+TABLESPACE pg_default
+AS SELECT
+channel_name,
+sum(session_content_on_period)/60/60 as hours,
+round(avg(session_content_on_period)/60) as avg_time_minut,
+count(*) as count
+   FROM mv_nebogin_iptv
+   group by 1
+   order by 4 desc
+  WITH DATA
+DISTRIBUTED RANDOMLY;
+
+CREATE MATERIALIZED VIEW public.mv_nebogin_day_rate
+TABLESPACE pg_default
+AS SELECT
+period,
+sum(session_content_on_period)/60/60 as hours,
+count(*) as count
+   FROM mv_nebogin_iptv
+   group by 1
+   order by 3 desc
+  WITH DATA
+DISTRIBUTED RANDOMLY;
+
+CREATE MATERIALIZED VIEW public.mv_nebogin_day_h_rate
+TABLESPACE pg_default
+AS SELECT
+h.period,
+h.hours,
+count(h.hours) AS count_v
+FROM ( SELECT public.mv_nebogin_iptv.period, generate_series(date_part('hour'::text, public.mv_nebogin_iptv.session_content_time_start::time without time zone)::integer,
+	date_part('hour'::text, public.mv_nebogin_iptv.session_content_time_end::time without time zone)::integer) AS hours
+           FROM public.mv_nebogin_iptv) h
+  GROUP BY h.period,h.hours
+  ORDER BY h.hours
+  WITH DATA
+DISTRIBUTED RANDOMLY;
